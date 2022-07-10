@@ -1,0 +1,271 @@
+#include <ESP8266WiFi.h>
+#include <FirebaseESP8266.h>
+#include <ArduinoJson.h>
+#include <ESP8266HTTPClient.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+//#include "DHT.h"
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+
+//-----------------------------------Ultrasonic Digital Write
+#define pinTriger D6
+#define pinEcho D5
+/*#define DHTTYPE DHT22
+const int DHTPin = 14; //--> The pin used for the DHT11 sensor is Pin D5 = GPIO14
+DHT dht(DHTPin, DHTTYPE);*/
+
+//----------------------------------------SSID and Password of your WiFi router.
+const char* ssid = "Teui"; //--> Your wifi name or SSID.
+const char* password = "noknok123"; //--> Your wifi password.
+
+//-----------------------------Firebase Autification
+#define FIREBASE_HOST "monitoring-ketinggian-default-rtdb.firebaseio.com" //--> URL address of your Firebase Realtime Database.
+#define FIREBASE_AUTH "IDVVm5yZ4YDLzR9PGoG6uH7M8Hr4VKer7W15c1eW" //--> Your firebase database secret code.
+FirebaseData firebaseData;
+
+
+#define ON_Board_LED 2  //--> Defining an On Board LED, used for indicators when the process of connecting to a wifi router
+
+//----------------------------------------Adjust the UTC
+// You need to adjust the UTC offset for your timezone in milliseconds. 
+// See the UTC time offset list here : https://en.wikipedia.org/wiki/List_of_UTC_time_offsets
+// Here are some examples for different timezones :
+// > For UTC -5.00 : -5 * 60 * 60 : -18000
+// > For UTC +1.00 : 1 * 60 * 60 : 3600
+// > For UTC +0.00 : 0 * 60 * 60 : 0
+const long utcOffsetInSeconds = 25200;
+//----------------------------------------Define NTP Client to get time
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org");
+
+
+unsigned long previousMillis = 0;        //--> will store last time was updated
+const long interval = 1000;           //--> interval for seconds, 10000 for minutes
+
+unsigned long interval2=1500; // the time we need to wait
+unsigned long previousMillis2=0; // millis() returns an unsigned long.
+
+
+void setup() {
+
+  Serial.begin(115200);
+  delay(500);
+
+  //HC-Sr04
+  pinMode(pinTriger, OUTPUT);
+  pinMode(pinEcho, INPUT);
+  //--------------------------------Dht22
+  /*dht.begin();  //--> Start reading DHT22 sensors
+  delay(500);*/
+  
+  //-----------------------------------
+  WiFi.begin(ssid, password); //--> Connect to your WiFi router
+  Serial.println("");
+    
+  pinMode(ON_Board_LED,OUTPUT); 
+  digitalWrite(ON_Board_LED, HIGH); 
+
+  //----------------------------------------Wait for connection
+  Serial.print("Connecting");
+  delay (5000);
+  
+  //----------------------------------------
+  digitalWrite(ON_Board_LED, HIGH); //--> Turn off the On Board LED when it is connected to the wifi router.
+  Serial.println("");
+  Serial.print("Successfully connected to : ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+
+  //----------------------------------------Firebase Configuration.
+  Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
+  Firebase.reconnectWiFi(true);
+  
+  //----------------------------------------Initialize a NTPClient to get time
+  timeClient.begin();
+  timeClient.setTimeOffset(utcOffsetInSeconds);
+  //----------------------------------------
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+    }
+    delay(500);
+    display.clearDisplay();
+
+    display.setTextSize(2);
+    display.setTextColor(WHITE);
+  
+  delay(1000);
+
+}
+
+void loop() {
+
+ 
+
+    unsigned long currentMillis2 = millis();
+    if ((unsigned long)(currentMillis2 - previousMillis2) >= interval2) {
+   
+    digitalWrite(pinTriger, LOW);
+      delayMicroseconds(5);
+
+      digitalWrite(pinTriger, HIGH);
+      delayMicroseconds(10);
+
+      digitalWrite(pinTriger, LOW);
+
+      float durasi = pulseIn(pinEcho, HIGH);
+      float jauh = durasi*0.034/-2;
+
+      display.clearDisplay();
+      display.setCursor(35, 15);
+      display.println("TMAT");
+      // Display distance in cm
+      display.print(jauh);
+      display.print(" cm");
+      display.display(); 
+
+      
+    // save the "current" time
+     previousMillis2 = millis();
+     
+      }
+
+    timeClient.update();   
+    int everyfive = timeClient.getSeconds();
+
+   if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Terhubung");
+   
+    if ( everyfive %15 == 0) {
+      unsigned long epochTime = timeClient.getEpochTime();
+      struct tm *ptm = gmtime ((time_t *)&epochTime);
+  
+      int monthDay = ptm->tm_mday; 
+      int currentMonth = ptm->tm_mon+1;
+      int currentYear = ptm->tm_year+1900;
+      String strmonthDay;
+      String strcurrentMonth;
+
+      if (monthDay <10) {
+        strmonthDay = "0" + String(monthDay);
+      } else {
+        strmonthDay = String(monthDay);
+      }
+
+      if (currentMonth <10) {
+        strcurrentMonth = "0" + String(currentMonth);
+      } else {
+        strcurrentMonth = String(currentMonth);
+      }
+  
+      String currentDate = strmonthDay + "-" + strcurrentMonth + "-" + String(currentYear);
+      Serial.print("Current Date: ");
+      Serial.print(currentDate);
+  
+      String currentTime = timeClient.getFormattedTime();
+      Serial.print("  Current Time: ");
+      Serial.println(currentTime);  
+      delay(1000);
+   
+
+      //---------------Reading DHT
+     /* int h = dht.readHumidity(); //--> Read humidity.
+      float t = dht.readTemperature(); //--> Read temperature as Celsius (the default). 
+      if (isnan(h) || isnan(t)) {
+      Serial.println(" Failed to load DHT sensor !");
+      delay(1000);
+      return;
+      }
+      Serial.print(F("Humidity: "));
+      Serial.print(h);
+      Serial.print(F("%  Temperature: "));
+      Serial.print(t);
+      Serial.println(F("°C "));*/
+      //----------------------------------------Reading jarak
+      digitalWrite(pinTriger, LOW);
+      delayMicroseconds(5);
+
+      digitalWrite(pinTriger, HIGH);
+      delayMicroseconds(10);
+
+      digitalWrite(pinTriger, LOW);
+
+      float durasi = pulseIn(pinEcho, HIGH);
+      float jauh = durasi*0.034/-2;
+   
+
+      //========================================================================
+      //========================================================================
+      //===============  Dikurang dengan tinggi pipa di float real-nya  ==========
+      //========================================================================
+      //========================================================================
+
+      
+      float real = jauh + 0 ;
+
+      //________________________________________________________________________
+      
+      String (jarak2) = String (real); 
+      Serial.print("Jarak : ");
+      Serial.print(real);
+      Serial.println(" Cm");
+      Serial.println("Sending To firebase");
+
+      //-------------TimeStamp
+      int timeStamp = timeClient.getEpochTime();
+      int subTime = timeStamp - 25200;
+
+      delay(500);  
+
+      if (Firebase.setInt(firebaseData, "Pertama/ID", subTime)){
+      Serial.println("Upload Successfully 1");
+      }
+      if (Firebase.setString(firebaseData, "Pertama/Jarak", jarak2)){
+      Serial.println("Upload Successfully 2");
+        }
+      /*if (Firebase.setFloat(firebaseData, "Pertama/Temperature", t)){
+      Serial.println("Upload Successfully 3");
+      }
+      if (Firebase.setInt(firebaseData, "Pertama/Humidity", h)){
+      Serial.println("Upload Successfully 4");
+      }*/
+      if (Firebase.setFloat(firebaseData, "Pertama/Jarak2", real)){
+      Serial.println("Upload Successfully 5");
+        }
+      if (Firebase.setString(firebaseData, "Pertama/Date", currentDate)){
+      Serial.println("Upload Successfully 6");
+        }
+      if (Firebase.setString(firebaseData, "Pertama/Time", currentTime)){
+        Serial.println("Upload Successfully 7");
+        Serial.println();
+        }
+
+      //----------------------------------------Sending log
+      /*int timeStamp = timeClient.getEpochTime();
+        int subTime = timeStamp - 25200; 
+        String times = String (subTime);
+        Serial.print("Epoch ");
+        Serial.println(subTime);
+        Serial.println("Sending Time and Date Data Successfully");
+        Serial.println();
+
+        
+        int jerk = int(jauh);
+        Firebase.setInt("chartLogs",subTime"yVal",jerk);
+
+       */
+       } 
+      }
+      
+}
